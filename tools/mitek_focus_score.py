@@ -15,9 +15,12 @@ Patent text implemented here:
     - Pass if score >= threshold (threshold depends on the device; the patent gives no value).
 
 Real resolution (dpi) when the card does not fill the image
-    The card (ISO/IEC 7810 ID-1, 85.60 x 53.98 mm) is first LOCATED in the image, then
+    The card (ID-1, 85.60 x 53.98 mm, as in Vietnamese CCCD/CMND) gives
         dpi = card long side in pixels / (85.60 mm / 25.4)
-    Two ways to locate the card:
+    Default (--dpi-mode margin): ASSUME the card sits inside the image with --margin (default 5%)
+    of free space on each of the 4 sides. The card is the largest ID-1 rectangle that fits in the
+    remaining box, centred. No detection is done, so it is only as true as that assumption.
+    Other ways to locate the card (--dpi-mode card):
       * --boxes file.csv   : card boxes from your own card detector (most accurate).
                              Columns: file,x1,y1,x2,y2   (file = image file name)
       * automatic (default): OpenCV quadrilateral search (edges -> 4-corner contour whose
@@ -47,8 +50,10 @@ What the patent does NOT specify (explicit, adjustable choices, not patent facts
 `ratio` (= max_gradient / dynamic_range, dpi-independent) is also reported.
 
 Usage:
-    python mitek_focus_score.py /path/to/folder --csv out.csv
-    python mitek_focus_score.py /path/to/folder --boxes card_boxes.csv --csv out.csv
+    python mitek_focus_score.py /path/to/folder --csv out.csv                  # 5% margin on each side
+    python mitek_focus_score.py /path/to/folder --margin 0.08                  # 8% margin
+    python mitek_focus_score.py /path/to/folder --dpi-mode card --csv out.csv  # detect the card
+    python mitek_focus_score.py /path/to/folder --dpi-mode card --boxes card_boxes.csv --csv out.csv
     python mitek_focus_score.py image.jpg --dpi-mode fixed --dpi 100 --measure-region image
 """
 
@@ -145,6 +150,20 @@ def find_card_auto(gray: np.ndarray):
     return best / scale
 
 
+def card_quad_from_margin(h: int, w: int, margin: float) -> np.ndarray:
+    """Largest ID-1 rectangle, centred, inside the image box left after removing `margin`
+    (fraction of width/height) on every side. Orientation follows the image."""
+    bx1, by1, bx2, by2 = margin * w, margin * h, (1 - margin) * w, (1 - margin) * h
+    bw, bh = bx2 - bx1, by2 - by1
+    long_box, short_box = max(bw, bh), min(bw, bh)
+    px_per_mm = min(long_box / CARD_LONG_MM, short_box / CARD_SHORT_MM)
+    long_px, short_px = CARD_LONG_MM * px_per_mm, CARD_SHORT_MM * px_per_mm
+    cw, ch = (long_px, short_px) if bw >= bh else (short_px, long_px)
+    cx, cy = (bx1 + bx2) / 2, (by1 + by2) / 2
+    return np.array([[cx - cw / 2, cy - ch / 2], [cx + cw / 2, cy - ch / 2],
+                     [cx + cw / 2, cy + ch / 2], [cx - cw / 2, cy + ch / 2]], dtype=np.float32)
+
+
 def quad_from_box(x1, y1, x2, y2) -> np.ndarray:
     return np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32)
 
@@ -223,13 +242,17 @@ def process(path: Path, args, boxes):
     region = gray
     dpi = None
 
-    if args.dpi_mode == "card":
-        quad = boxes.get(path.name)
-        if quad is not None:
-            row["card_method"] = "boxes"
+    if args.dpi_mode in ("margin", "card"):
+        if args.dpi_mode == "margin":
+            quad = card_quad_from_margin(h, w, args.margin)
+            row["card_method"] = "margin"
         else:
-            quad = find_card_auto(gray)
-            row["card_method"] = "auto" if quad is not None else ""
+            quad = boxes.get(path.name)
+            if quad is not None:
+                row["card_method"] = "boxes"
+            else:
+                quad = find_card_auto(gray)
+                row["card_method"] = "auto" if quad is not None else ""
         if quad is None:
             row.update(dpi=float("nan"), dpi_source="card_size", score=float("nan"), ratio=float("nan"),
                        note="card not found (give --boxes or use --dpi-mode fixed)")
@@ -264,8 +287,11 @@ def main():
     ap.add_argument("--recursive", action="store_true")
     ap.add_argument("--boxes", type=Path, default=None,
                     help="CSV with card boxes (file,x1,y1,x2,y2) from your card detector")
-    ap.add_argument("--dpi-mode", choices=["card", "metadata", "fixed"], default="card",
-                    help="card: real dpi from the located card (default); metadata: file dpi; fixed: --dpi")
+    ap.add_argument("--dpi-mode", choices=["margin", "card", "metadata", "fixed"], default="margin",
+                    help="margin: assume card inside image with --margin on each side (default); "
+                         "card: detect the card / use --boxes; metadata: file dpi; fixed: --dpi")
+    ap.add_argument("--margin", type=float, default=0.05,
+                    help="free space on each side as a fraction of width/height (--dpi-mode margin)")
     ap.add_argument("--dpi", type=float, default=100.0, help="dpi for --dpi-mode fixed (or metadata fallback)")
     ap.add_argument("--measure-region", choices=["card", "image"], default="card")
     ap.add_argument("--inset", type=float, default=0.02,
