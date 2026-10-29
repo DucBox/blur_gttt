@@ -220,7 +220,12 @@ def main():
                 seen[doc] = seen.get(doc, 0) + 1
                 picked.append(f)
         files = picked
-    rows = [process(f, a.ocr_root, a.img_root) for f in files]
+    try:
+        from tqdm import tqdm
+        it = tqdm(files, unit="file", desc="gt_extract")
+    except ImportError:  # progress bar is optional
+        it = files
+    rows = [process(f, a.ocr_root, a.img_root) for f in it]
     with a.csv.open("w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, CSV_FIELDS)
         w.writeheader()

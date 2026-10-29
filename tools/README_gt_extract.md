@@ -11,10 +11,10 @@ Bước 1 của quy trình gán nhãn mờ GTTT: lấy "đáp án" của thẻ m
 Chỉ chạy MRZ thì không cần cài gì. Quét QR cần:
 
 ```
-pip install opencv-python-headless zxing-cpp
+pip install opencv-python-headless zxing-cpp tqdm
 ```
 
-`zxing-cpp` tùy chọn (không có thì dùng bộ đọc QR của OpenCV). `pyzbar` là phương án thứ ba, cần `apt install libzbar0`.
+`tqdm` (thanh tiến độ) và `zxing-cpp` tùy chọn (không có `zxing-cpp` thì dùng bộ đọc QR của OpenCV). `pyzbar` là phương án thứ ba, cần `apt install libzbar0`.
 
 ## Cấu trúc thư mục
 
@@ -82,3 +82,26 @@ Của `qr_error`: `no QR decoded`, `N fields`, hoặc lỗi đọc ảnh.
 2. Số ID 12 số nằm trong phần tùy chọn của dòng 1 MRZ, và 9 số cuối là số giấy tờ. Mẫu Căn cước đã khớp, CCCD cũ có MRZ chưa kiểm tra.
 
 Nên chạy `--test` trước, xem `QR ok` và `qr_error` rồi mới chạy toàn bộ.
+
+---
+
+# gt_pair.py — gắn ground truth cho ảnh mặt trước
+
+Ghép mặt trước với "sổ đáp án" lấy từ các mặt sau trong `gt.csv`, theo danh tính (loại thẻ + số ID, kèm ngày sinh / tên khi ID bị OCR sai), không cần mã phiên.
+
+```
+python tools/gt_pair.py --gt gt.csv \
+    --ocr-root /home/ducnq7/workspace/card_quality_ekyc/id_quality/ocr_results/idcard-quality \
+    --csv pairs.csv
+```
+
+Cột `match`:
+
+| Giá trị | Ý nghĩa | Xử lý |
+|---|---|---|
+| `exact_id` | ID mặt trước trùng ID trong sổ | chấm tự động |
+| `fuzzy` | ID lệch ≤ 2 ký tự và trùng ngày sinh hoặc tên, chỉ có một ứng viên | chấm tự động |
+| `ambiguous` | có nhiều ứng viên | giao người xem |
+| `none` | không có ứng viên (thường là ảnh mờ nặng) | giao người xem, gán nhóm E |
+
+Các cột còn lại: `gt_group` (A/B/C hoặc E nếu không ghép được), các cột `gt_*` (đáp án), `ocr_*` (giá trị OCR của chính ảnh mặt trước), `back_ocr_json` và `n_backs`.
