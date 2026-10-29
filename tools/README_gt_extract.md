@@ -101,7 +101,16 @@ Cột `match`:
 |---|---|---|
 | `exact_id` | ID mặt trước trùng ID trong sổ | chấm tự động |
 | `fuzzy` | ID lệch ≤ 2 ký tự và trùng ngày sinh hoặc tên, chỉ có một ứng viên | chấm tự động |
-| `ambiguous` | có nhiều ứng viên | giao người xem |
-| `none` | không có ứng viên (thường là ảnh mờ nặng) | giao người xem, gán nhóm E |
+| `ambiguous` | có nhiều ứng viên | không có ground truth |
+| `no_back` | không có ứng viên; thực tế gần như luôn là thẻ không có ảnh mặt sau trong tập, không phải dấu hiệu mờ | không có ground truth |
 
-Các cột còn lại: `gt_group` (A/B/C hoặc E nếu không ghép được), các cột `gt_*` (đáp án), `ocr_*` (giá trị OCR của chính ảnh mặt trước), `back_ocr_json` và `n_backs`.
+Các cột còn lại: `gt_group` (A/B/C, để trống nếu không ghép được), các cột `gt_*` (đáp án), `ocr_*` (giá trị OCR của chính ảnh mặt trước), `back_ocr_json` và `n_backs`.
+
+Cột `id_check` (cho mọi ảnh mặt trước, không cần mặt sau): số ID 12 số có chữ số thứ 4 mã hóa giới tính và thế kỷ sinh, chữ số 5–6 là hai số cuối năm sinh, nên phải khớp với ngày sinh và giới tính OCR trên cùng ảnh.
+
+| Giá trị | Ý nghĩa |
+|---|---|
+| `ok` | nhất quán (bằng chứng khá mạnh là cả ba trường đúng, chưa phải ground truth) |
+| `mismatch:year,sex` | ít nhất một trong ID / ngày sinh / giới tính bị OCR sai |
+| `bad_id` | ID rỗng hoặc không đủ 12 số |
+| `incomplete` | thiếu cả ngày sinh lẫn giới tính nên không kiểm tra được |

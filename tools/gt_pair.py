@@ -9,8 +9,14 @@ answer. A front is matched to a back of the SAME card family (CC with CC, CCCD w
     exact_id : front OCR id == back id
     fuzzy    : id differs by <= 2 characters AND (same birthday OR same unaccented name),
                accepted only when exactly one person qualifies
-    ambiguous: several people qualify  -> human
-    none     : nobody qualifies        -> human (often a badly blurred front, keep it!)
+    ambiguous: several people qualify  -> no ground truth, human if needed
+    no_back  : nobody qualifies. In practice this is almost always a valid 12-digit id whose card simply
+               has no back image in the data set (NOT a blur sign), so it gets no ground truth.
+
+Every front also gets `id_check`: the 12-digit id encodes sex + century (4th digit) and birth year
+(5th-6th digits), so it must agree with the OCR birthday / sex on the same image:
+    ok | mismatch:<year,sex,...> | bad_id | incomplete
+`mismatch` means at least one of id / birthday / sex is OCR-wrong; it is evidence, not ground truth.
 
 Usage:
     python gt_pair.py --gt gt.csv --ocr-root .../ocr_results/idcard-quality --csv pairs.csv
@@ -25,7 +31,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 OUT_FIELDS = [
-    "ocr_json", "document", "match", "gt_group", "n_backs", "back_ocr_json",
+    "ocr_json", "document", "match", "id_check", "gt_group", "n_backs", "back_ocr_json",
     "gt_id", "gt_name", "gt_name_noaccent", "gt_birthday", "gt_sex", "gt_expiry", "gt_nationality",
     "gt_address", "gt_issue_date",
     "ocr_id", "ocr_name", "ocr_birthday", "ocr_sex",
@@ -52,6 +58,23 @@ def lev(a, b, cap=3):
             cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
         prev = cur
     return prev[-1]
+
+
+def id_check(oid, bday, sex):
+    """Check OCR id vs OCR birthday / sex using the structure of the 12-digit id."""
+    if not (len(oid) == 12 and oid.isdigit()):
+        return "bad_id"
+    code = int(oid[3])
+    bad, done = [], 0
+    if len(bday) == 10 and bday[6:].isdigit():
+        done += 1
+        if int(bday[6:]) != 1900 + 100 * (code // 2) + int(oid[4:6]):
+            bad.append("year")
+    if sex_key(sex):
+        done += 1
+        if sex_key(sex) != ("M" if code % 2 == 0 else "F"):
+            bad.append("sex")
+    return "mismatch:" + ",".join(bad) if bad else "ok" if done else "incomplete"
 
 
 def sex_key(s):
@@ -102,7 +125,7 @@ def match_front(info, fam, people, by_bday, by_name):
         cands = {p["id"]: p for p in pool if lev(oid, p["id"], 2) <= 2}
     if len(cands) == 1:
         return next(iter(cands.values())), "fuzzy"
-    return None, "ambiguous" if cands else "none"
+    return None, "ambiguous" if cands else "no_back"
 
 
 def main():
@@ -134,7 +157,8 @@ def main():
         fam = family(doc)
         p, how = match_front(info, fam, people, by_bday, by_name)
         row = dict.fromkeys(OUT_FIELDS, "")
-        row.update(ocr_json=str(f), document=doc, match=how, gt_group="E" if p is None else group_of(p),
+        row.update(ocr_json=str(f), document=doc, match=how, gt_group="" if p is None else group_of(p),
+                   id_check=id_check(info.get("id", ""), info.get("birthday", ""), info.get("sex", "")),
                    ocr_id=info.get("id", ""), ocr_name=info.get("name", ""),
                    ocr_birthday=info.get("birthday", ""), ocr_sex=info.get("sex", ""))
         if p:
@@ -152,8 +176,10 @@ def main():
     print("%d front json, %d people with ground truth -> %s" % (len(rows), len(people), a.csv), file=sys.stderr)
     for doc in sorted({r["document"] for r in rows}):
         c = Counter(r["match"] for r in rows if r["document"] == doc)
+        k = Counter(r["id_check"].split(":")[0] for r in rows if r["document"] == doc)
         print("  %-16s n=%-5d %s" % (doc, sum(c.values()), "  ".join("%s=%d" % kv for kv in sorted(c.items()))),
               file=sys.stderr)
+        print("  %-16s id_check: %s" % ("", "  ".join("%s=%d" % kv for kv in sorted(k.items()))), file=sys.stderr)
 
 
 if __name__ == "__main__":
