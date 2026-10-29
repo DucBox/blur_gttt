@@ -203,18 +203,43 @@ def main():
     ap.add_argument("--ocr-root", required=True, type=Path)
     ap.add_argument("--img-root", type=Path, help="omit to skip QR decoding")
     ap.add_argument("--csv", required=True, type=Path)
+    ap.add_argument("--test", nargs="?", const=3, type=int, metavar="N",
+                    help="smoke test: only the first N json (default 3) of each document type")
     a = ap.parse_args()
 
     files = sorted(a.ocr_root.rglob("*.json"))
+    if a.test:
+        seen, picked = {}, []
+        for f in files:
+            try:
+                infos = json.loads(f.read_text(encoding="utf-8")).get("information") or [{}]
+            except ValueError:
+                continue
+            doc = infos[0].get("document", "")
+            if seen.get(doc, 0) < a.test:
+                seen[doc] = seen.get(doc, 0) + 1
+                picked.append(f)
+        files = picked
     rows = [process(f, a.ocr_root, a.img_root) for f in files]
     with a.csv.open("w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, CSV_FIELDS)
         w.writeheader()
         w.writerows(rows)
 
-    backs = [r for r in rows if r["mrz_valid"] != ""]
-    print("%d json, %d with MRZ, %d MRZ valid -> %s" % (
-        len(rows), len(backs), sum(1 for r in backs if r["mrz_valid"] == 1), a.csv), file=sys.stderr)
+    print("%d json -> %s" % (len(rows), a.csv), file=sys.stderr)
+    for doc in sorted({r["document"] for r in rows}):
+        rs = [r for r in rows if r["document"] == doc]
+        line = "  %-18s n=%d" % (doc or "(none)", len(rs))
+        mrz = [r for r in rs if r["mrz_valid"] != ""]
+        if mrz:
+            line += "  MRZ valid %d/%d" % (sum(r["mrz_valid"] == 1 for r in mrz), len(mrz))
+        qr = [r for r in rs if r["qr_ok"] != ""]
+        if qr:
+            line += "  QR ok %d/%d" % (sum(r["qr_ok"] == 1 for r in qr), len(qr))
+        both = [r["qr_vs_mrz"] for r in rs if r["qr_vs_mrz"]]
+        if both:
+            line += "  QR==MRZ %d/%d" % (both.count("match"), len(both))
+        print(line, file=sys.stderr)
 
 
 if __name__ == "__main__":
