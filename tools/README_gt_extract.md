@@ -141,3 +141,32 @@ Output:
 | `need_b4` | có trường sai/thiếu | người xác định mờ hay lỗi khác |
 | `need_b3` | mọi trường có GT đều đúng, còn trường thiếu GT | bước 3 (conf + VLM) |
 | `ok` | mọi trường đúng theo GT | OK |
+
+---
+
+# calibrate_t.py — bước 3: xác nhận trường không có GT bằng độ tin cậy + VLM
+
+Trường được máy xác nhận "OCR đúng" khi **cả hai**: độ tin cậy ≥ T **và** VLM đọc giống OCR (sau chuẩn hóa). Không đạt thì giao người; máy không bao giờ kết luận "sai".
+
+T được hiệu chỉnh trên các trường **có GT** (`fields.csv`), riêng cho từng nhóm: T nhỏ nhất mà độ chính xác ≥ `--target` với ít nhất `--min-accepted` ô được chấp nhận.
+
+| Nhóm | Trường |
+|---|---|
+| `short` | id, birthday, expiry, issue_date, sex, nationality |
+| `name` | name (chỉ ô so với tên có dấu từ QR) |
+| `address` | address, birthplace, hometown, feature |
+
+```
+python tools/calibrate_t.py --fields step2/fields.csv --images step2/images.csv \
+    --vlm vlm.jsonl --out-dir step3/
+```
+
+Tùy chọn: `--conf conf|min_char_conf` (cột độ tin cậy, mặc định `conf`), `--target 0.995`, `--min-accepted 1000`.
+
+`vlm.jsonl`: mỗi dòng một ảnh `{"image": "pair_x/<ảnh>.jpg", "fields": {...}, "template_ok": true}`; dòng `template_ok: false` bị bỏ qua.
+
+Output (`step3/`):
+- `calibration.csv`: đường cong T → số ô chấp nhận, độ chính xác, độ phủ, theo nhóm.
+- `thresholds.csv`: T đã chọn cho mỗi nhóm (trống nếu không T nào đạt, khi đó cả nhóm giao người).
+- `b3_fields.csv`: mỗi trường cần bước 3 với `decision` (`auto_correct` / `human`) và `reason` (`vlm_differs`, `low_conf`, `no_vlm`, `no_T`).
+- `b3_images.csv`: ảnh `need_b3` chuyển thành `ok` hoặc `need_human_b3` kèm danh sách trường cần người xem.
