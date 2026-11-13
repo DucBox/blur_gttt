@@ -114,3 +114,30 @@ Cột `id_check` (cho mọi ảnh mặt trước, không cần mặt sau): số 
 | `mismatch:year,sex` | ít nhất một trong ID / ngày sinh / giới tính bị OCR sai |
 | `bad_id` | ID rỗng hoặc không đủ 12 số |
 | `incomplete` | thiếu cả ngày sinh lẫn giới tính nên không kiểm tra được |
+
+---
+
+# gt_compare.py — gộp GT theo cặp và so OCR với GT (bước 1 cuối + bước 2)
+
+Dùng cho dữ liệu theo thư mục cặp: `<ocr-root>/pair_<id>/<ảnh>.jpg.json`. Chỉ gán GT và so sánh; lọc theo module quality / spoof là bước sau.
+
+```
+python tools/gt_compare.py --gt gt.csv --ocr-root <...>/vds_api_sample/ocr --out-dir step2/
+```
+
+Tùy chọn: `--cer 0.05` (ngưỡng CER cho địa chỉ).
+
+Nơi cấp (`issue_by`) có GT cố định: `CC_BACK_CHIP` là "BỘ CÔNG AN / MINISTRY OF PUBLIC SECURITY", `CCCD_BACK_CHIP` là "CỤC TRƯỞNG CỤC CẢNH SÁT QUẢN LÝ HÀNH CHÍNH VỀ TRẬT TỰ XÃ HỘI".
+
+Output:
+- `step2/fields.csv`: mỗi dòng một ảnh × trường: `ocr`, `gt`, `gt_source` (MRZ/QR/checksum/fixed), `status`, `cer`, `conf`, `min_char_conf`.
+  `status`: `correct`, `wrong`, `missing` (trường bắt buộc nhưng OCR trả rỗng), `no_gt`, `correct_noaccent` (tên chỉ kiểm được không dấu, phần dấu vẫn cần bước 3).
+- `step2/images.csv`: mỗi dòng một ảnh, cột `status`:
+
+| status | Ý nghĩa | Tiếp theo |
+|---|---|---|
+| `gt_conflict` | nhóm D, MRZ và QR lệch nhau | bỏ cặp |
+| `need_human` | nhóm E, không có GT nào | người xem toàn bộ |
+| `need_b4` | có trường sai/thiếu | người xác định mờ hay lỗi khác |
+| `need_b3` | mọi trường có GT đều đúng, còn trường thiếu GT | bước 3 (conf + VLM) |
+| `ok` | mọi trường đúng theo GT | OK |

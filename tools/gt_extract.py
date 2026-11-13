@@ -29,7 +29,7 @@ QR_DOCS = {"CCCD_FRONT_CHIP", "CC_BACK_CHIP"}
 CSV_FIELDS = [
     "ocr_json", "image", "document",
     "mrz_valid", "mrz_error", "mrz_id", "mrz_name", "mrz_birthday", "mrz_sex", "mrz_expiry", "mrz_nationality",
-    "qr_ok", "qr_error", "qr_id", "qr_cmnd_id", "qr_name", "qr_birthday", "qr_sex", "qr_address", "qr_issue_date",
+    "qr_ok", "qr_error", "qr_via", "qr_id", "qr_cmnd_id", "qr_name", "qr_birthday", "qr_sex", "qr_address", "qr_issue_date",
     "qr_vs_mrz",
 ]
 
@@ -99,35 +99,69 @@ def parse_mrz(l1, l2, l3):
 
 # ---------------------------------------------------------------- QR
 
-def decode_qr(img_path):
-    """Return the QR text or None. Tries zxing-cpp, then OpenCV, then pyzbar; upscales on a miss."""
+def _read_one(v):
+    """Try zxing-cpp, then OpenCV, then pyzbar on one image."""
+    import cv2
+    try:
+        import zxingcpp
+        for r in zxingcpp.read_barcodes(v):
+            if "QR" in str(r.format):
+                return r.text
+    except ImportError:
+        pass
+    text, _, _ = cv2.QRCodeDetector().detectAndDecode(v)
+    if text:
+        return text
+    try:
+        from pyzbar import pyzbar
+        for r in pyzbar.decode(v):
+            return r.data.decode("utf-8", "replace")
+    except ImportError:
+        pass
+    return None
+
+
+def _qr_crops(img, info):
+    """Yield (name, crop) of the QR region given by the OCR, warped square and upscaled.
+
+    text_location is in the rectified card frame (card_size); card_location maps it back to the image.
+    """
+    import cv2
+    import numpy as np
+    box = (info.get("text_location") or {}).get("qrcode")
+    quad, size = info.get("card_location"), info.get("card_size")
+    if not (box and quad and size and len(quad) == 4):
+        return
+    w, h = size
+    to_img = cv2.getPerspectiveTransform(np.float32([[0, 0], [w, 0], [w, h], [0, h]]), np.float32(quad))
+    (x1, y1), (x2, y2) = box[0]
+    mx, my = (x2 - x1) * 0.2, (y2 - y1) * 0.2
+    src = np.float32([[[x1 - mx, y1 - my], [x2 + mx, y1 - my], [x2 + mx, y2 + my], [x1 - mx, y2 + my]]])
+    corners = cv2.perspectiveTransform(src, to_img)[0]
+    for s in (400, 800):
+        dst = np.float32([[0, 0], [s, 0], [s, s], [0, s]])
+        crop = cv2.warpPerspective(img, cv2.getPerspectiveTransform(corners, dst), (s, s), flags=cv2.INTER_CUBIC)
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        yield "crop%d" % s, gray
+        yield "crop%d_otsu" % s, cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+
+def decode_qr(img_path, info):
+    """Return (QR text, how) or (None, ""). Whole image first, then x2, then the OCR's QR box cropped."""
     import cv2  # noqa: PLC0415 - only needed when images are present
     img = cv2.imread(str(img_path))
     if img is None:
         raise IOError("cannot read image")
-    variants = [img, cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)]
-    try:
-        import zxingcpp
-        for v in variants:
-            res = zxingcpp.read_barcodes(v)
-            for r in res:
-                if "QR" in str(r.format):
-                    return r.text
-    except ImportError:
-        pass
-    det = cv2.QRCodeDetector()
-    for v in variants:
-        text, _, _ = det.detectAndDecode(v)
+    variants = [("full", img), ("full_x2", cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC))]
+    for name, v in variants:
+        text = _read_one(v)
         if text:
-            return text
-    try:
-        from pyzbar import pyzbar
-        for v in variants:
-            for r in pyzbar.decode(v):
-                return r.data.decode("utf-8", "replace")
-    except ImportError:
-        pass
-    return None
+            return text, name
+    for name, v in _qr_crops(img, info):
+        text = _read_one(v)
+        if text:
+            return text, name
+    return None, ""
 
 
 def parse_qr(text):
@@ -182,7 +216,7 @@ def process(json_path, ocr_root, img_root):
         img = img_root / rel
         row["image"] = str(img)
         try:
-            text = decode_qr(img)
+            text, row["qr_via"] = decode_qr(img, info)
             if text is None:
                 row["qr_ok"], row["qr_error"] = 0, "no QR decoded"
             else:
